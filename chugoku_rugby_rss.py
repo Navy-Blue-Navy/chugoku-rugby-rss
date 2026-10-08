@@ -48,10 +48,7 @@ if OUTPUT.exists():
                 old_items[guid] = {
                     "title": item.findtext("title", ""),
                     "link": item.findtext("link", ""),
-                    "description": item.findtext(
-                        "description",
-                        ""
-                    ),
+                    "description": item.findtext("description", ""),
                     "pubDate": item.findtext("pubDate", ""),
                     "guid": guid,
                 }
@@ -80,13 +77,18 @@ soup = BeautifulSoup(
 
 
 # --------------------------------------------------
+# 現在の日本時間
+# --------------------------------------------------
+
+now_jst = datetime.now(JST)
+
+
+# --------------------------------------------------
 # 検索結果の記事を取得
 # --------------------------------------------------
 
 current_items = []
 seen_urls = set()
-
-now_jst = datetime.now(JST)
 
 
 for a in soup.find_all("a", href=True):
@@ -101,7 +103,7 @@ for a in soup.find_all("a", href=True):
 
 
     # --------------------------------------------------
-    # 検索結果カード内か確認
+    # 検索結果エリア内か確認
     # --------------------------------------------------
 
     card = a.find_parent(
@@ -115,10 +117,6 @@ for a in soup.find_all("a", href=True):
         continue
 
 
-    # --------------------------------------------------
-    # l-list-block内か確認
-    # --------------------------------------------------
-
     list_block = card.find_parent(
         "div",
         class_=lambda classes:
@@ -131,7 +129,7 @@ for a in soup.find_all("a", href=True):
 
 
     # --------------------------------------------------
-    # ランキング内なら除外
+    # ランキングは除外
     # --------------------------------------------------
 
     ranking = a.find_parent(
@@ -143,6 +141,27 @@ for a in soup.find_all("a", href=True):
 
     if ranking is not None:
         continue
+
+
+    # --------------------------------------------------
+    # このリンク自身の文字だけ取得
+    #
+    # 例：
+    # 福井、島根で予選行わず 17:46 無料
+    #
+    # 南米4カ国が35年招致へ 2026/10/6 無料
+    # --------------------------------------------------
+
+    text = a.get_text(
+        " ",
+        strip=True
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
 
 
     # --------------------------------------------------
@@ -159,55 +178,14 @@ for a in soup.find_all("a", href=True):
 
 
     # --------------------------------------------------
-    # タイトル
-    # --------------------------------------------------
-
-    title = a.get_text(
-        " ",
-        strip=True
-    )
-
-    title = re.sub(
-        r"\s+",
-        " ",
-        title
-    ).strip()
-
-    if not title:
-        continue
-
-
-    # --------------------------------------------------
-    # カード全体の文字列
-    # --------------------------------------------------
-
-    card_text = card.get_text(
-        " ",
-        strip=True
-    )
-
-    card_text = re.sub(
-        r"\s+",
-        " ",
-        card_text
-    ).strip()
-
-
-    # --------------------------------------------------
-    # 公開日時
-    #
-    # 通常：
-    # 2026/10/6
-    #
-    # 当日の新着：
-    # 17:46
+    # 日付・時刻を判定
     # --------------------------------------------------
 
     date_match = re.search(
         r"(20\d{2})/"
         r"(\d{1,2})/"
         r"(\d{1,2})",
-        card_text
+        text
     )
 
     time_match = re.search(
@@ -215,9 +193,13 @@ for a in soup.find_all("a", href=True):
         r"([01]?\d|2[0-3]):"
         r"([0-5]\d)"
         r"(?!\d)",
-        card_text
+        text
     )
 
+
+    # --------------------------------------------------
+    # 過去記事：YYYY/M/D
+    # --------------------------------------------------
 
     if date_match:
 
@@ -225,28 +207,25 @@ for a in soup.find_all("a", href=True):
         month = int(date_match.group(2))
         day = int(date_match.group(3))
 
-        # 日付と時刻の両方があれば時刻も使用
-        if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2))
-        else:
-            hour = 12
-            minute = 0
-
         pub_date = datetime(
             year,
             month,
             day,
-            hour,
-            minute,
+            12,
+            0,
             0,
             tzinfo=JST
         )
 
+        title = text[:date_match.start()].strip()
+
+
+    # --------------------------------------------------
+    # 当日記事：HH:MM
+    # --------------------------------------------------
+
     elif time_match:
 
-        # 中国新聞は当日の記事を
-        # HH:MM のみで表示する場合がある
         hour = int(time_match.group(1))
         minute = int(time_match.group(2))
 
@@ -260,7 +239,24 @@ for a in soup.find_all("a", href=True):
             tzinfo=JST
         )
 
+        title = text[:time_match.start()].strip()
+
+
     else:
+        continue
+
+
+    # --------------------------------------------------
+    # タイトル末尾の不要ラベルを除去
+    # --------------------------------------------------
+
+    title = re.sub(
+        r"\s*(無料|限定)\s*$",
+        "",
+        title
+    ).strip()
+
+    if not title:
         continue
 
 
@@ -276,10 +272,10 @@ for a in soup.find_all("a", href=True):
         "「ラグビー」検索結果"
     )
 
-    if "限定" in card_text:
+    if "限定" in text:
         description += " / 限定記事"
 
-    elif "無料" in card_text:
+    elif "無料" in text:
         description += " / 無料記事"
 
 
@@ -297,9 +293,7 @@ for a in soup.find_all("a", href=True):
             "title": title,
             "link": article_url,
             "description": description,
-            "pubDate": format_datetime(
-                pub_date
-            ),
+            "pubDate": format_datetime(pub_date),
             "guid": guid,
         }
     )
@@ -379,9 +373,7 @@ channel = ET.SubElement(
 ET.SubElement(
     channel,
     "title"
-).text = (
-    "中国新聞デジタル「ラグビー」"
-)
+).text = "中国新聞デジタル「ラグビー」"
 
 
 ET.SubElement(
@@ -416,30 +408,25 @@ for item in all_items:
         "item"
     )
 
-
     ET.SubElement(
         element,
         "title"
     ).text = item["title"]
-
 
     ET.SubElement(
         element,
         "link"
     ).text = item["link"]
 
-
     ET.SubElement(
         element,
         "description"
     ).text = item["description"]
 
-
     ET.SubElement(
         element,
         "pubDate"
     ).text = item["pubDate"]
-
 
     guid_element = ET.SubElement(
         element,
