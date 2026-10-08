@@ -81,18 +81,12 @@ soup = BeautifulSoup(
 
 # --------------------------------------------------
 # 検索結果の記事を取得
-#
-# 条件：
-# ・記事URL /articles/-/数字
-# ・YYYY/M/D の日付がある
-# ・m-article-card-list の中にある
-# ・さらに l-list-block の中にある
-#
-# ランキング等の m-list-ranking は除外される
 # --------------------------------------------------
 
 current_items = []
 seen_urls = set()
+
+now_jst = datetime.now(JST)
 
 
 for a in soup.find_all("a", href=True):
@@ -152,104 +146,140 @@ for a in soup.find_all("a", href=True):
 
 
     # --------------------------------------------------
-    # リンク文字列
-    # --------------------------------------------------
-
-    text = a.get_text(
-        " ",
-        strip=True
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
-
-
-    # --------------------------------------------------
-    # 日付
-    # --------------------------------------------------
-
-    date_match = re.search(
-        r"(20\d{2})/"
-        r"(\d{1,2})/"
-        r"(\d{1,2})",
-        text
-    )
-
-    if not date_match:
-        continue
-
-
-    # --------------------------------------------------
     # URL
     # --------------------------------------------------
 
     article_url = urljoin(
         BASE_URL,
         href
-    )
-
-    article_url = article_url.split("?")[0]
-
+    ).split("?")[0]
 
     if article_url in seen_urls:
         continue
-
-    seen_urls.add(article_url)
 
 
     # --------------------------------------------------
     # タイトル
     # --------------------------------------------------
 
-    title = text[
-        :date_match.start()
-    ].strip()
+    title = a.get_text(
+        " ",
+        strip=True
+    )
+
+    title = re.sub(
+        r"\s+",
+        " ",
+        title
+    ).strip()
 
     if not title:
         continue
 
 
     # --------------------------------------------------
-    # 公開日
+    # カード全体の文字列
     # --------------------------------------------------
 
-    year = int(date_match.group(1))
-    month = int(date_match.group(2))
-    day = int(date_match.group(3))
-
-    pub_date = datetime(
-        year,
-        month,
-        day,
-        12,
-        0,
-        0,
-        tzinfo=JST
+    card_text = card.get_text(
+        " ",
+        strip=True
     )
+
+    card_text = re.sub(
+        r"\s+",
+        " ",
+        card_text
+    ).strip()
+
+
+    # --------------------------------------------------
+    # 公開日時
+    #
+    # 通常：
+    # 2026/10/6
+    #
+    # 当日の新着：
+    # 17:46
+    # --------------------------------------------------
+
+    date_match = re.search(
+        r"(20\d{2})/"
+        r"(\d{1,2})/"
+        r"(\d{1,2})",
+        card_text
+    )
+
+    time_match = re.search(
+        r"(?<!\d)"
+        r"([01]?\d|2[0-3]):"
+        r"([0-5]\d)"
+        r"(?!\d)",
+        card_text
+    )
+
+
+    if date_match:
+
+        year = int(date_match.group(1))
+        month = int(date_match.group(2))
+        day = int(date_match.group(3))
+
+        # 日付と時刻の両方があれば時刻も使用
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+        else:
+            hour = 12
+            minute = 0
+
+        pub_date = datetime(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            0,
+            tzinfo=JST
+        )
+
+    elif time_match:
+
+        # 中国新聞は当日の記事を
+        # HH:MM のみで表示する場合がある
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2))
+
+        pub_date = datetime(
+            now_jst.year,
+            now_jst.month,
+            now_jst.day,
+            hour,
+            minute,
+            0,
+            tzinfo=JST
+        )
+
+    else:
+        continue
+
+
+    seen_urls.add(article_url)
 
 
     # --------------------------------------------------
     # 無料・限定
     # --------------------------------------------------
 
-    after_date = text[
-        date_match.end():
-    ].strip()
-
     description = (
         "中国新聞デジタル "
         "「ラグビー」検索結果"
     )
 
-    if "限定" in after_date:
-
+    if "限定" in card_text:
         description += " / 限定記事"
 
-    elif "無料" in after_date:
-
+    elif "無料" in card_text:
         description += " / 無料記事"
 
 
@@ -277,7 +307,7 @@ for a in soup.find_all("a", href=True):
 
     print(
         f"[{len(current_items)}] "
-        f"{pub_date.strftime('%Y/%m/%d')} "
+        f"{pub_date.strftime('%Y/%m/%d %H:%M')} "
         f"{title}"
     )
 
